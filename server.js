@@ -9,7 +9,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const DATA_FILE = path.join(__dirname, 'auth.json');
+// Use AUTH_FILE (full path) or DATA_DIR (directory) so cPanel/read-only hosts can point to a writable path
+const DATA_FILE = process.env.AUTH_FILE || path.join(process.env.DATA_DIR || __dirname, 'auth.json');
 
 async function loadData() {
   try {
@@ -22,6 +23,8 @@ async function loadData() {
 }
 
 async function saveData(data) {
+  const dir = path.dirname(DATA_FILE);
+  await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
