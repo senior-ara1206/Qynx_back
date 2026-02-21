@@ -43,7 +43,8 @@ app.get('/api/users/:id', async (req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
-  const { name, email, password } = req.body || {};
+  const { name, email, active, role, loginCount, password } = req.body || {};
+  console.log(req.body);
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
 
   const data = await loadData();
@@ -52,7 +53,16 @@ app.post('/api/register', async (req, res) => {
   }
 
   const hashed = bcrypt.hashSync(password, 10);
-  const user = { id: randomUUID(), name: name || '', email, password: hashed, createdAt: new Date().toISOString() };
+  const user = { 
+    id: randomUUID(), 
+    name: name || '', 
+    email, 
+    active: true,
+    role: 'user',
+    loginCount: 0,
+    password: hashed, 
+    createdAt: new Date().toISOString() 
+  };
   data.users.push(user);
   await saveData(data);
 
@@ -65,16 +75,20 @@ app.post('/api/login', async (req, res) => {
 
   const data = await loadData();
   const user = data.users.find(u => u.email === email);
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!user) return res.status(401).json({ error: 'You are not registered. Please Sign Up.' });
+  if (user.active === false) return res.status(403).json({ error: 'Your account has been blocked. Please contact support.' });
 
   const ok = bcrypt.compareSync(password, user.password);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!ok) return res.status(401).json({ error: 'Incorrect password. Please try again.' });
+
+  user.loginCount = (user.loginCount || 0) + 1;
+  await saveData(data);
 
   res.json(safeUser(user));
 });
 
 app.put('/api/users/:id', async (req, res) => {
-  const { name, email, password } = req.body || {};
+  const { name, email, password, role, active } = req.body || {};
   const data = await loadData();
   const idx = data.users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'User not found' });
@@ -86,6 +100,8 @@ app.put('/api/users/:id', async (req, res) => {
   if (typeof name !== 'undefined') data.users[idx].name = name;
   if (typeof email !== 'undefined') data.users[idx].email = email;
   if (typeof password !== 'undefined' && password !== '') data.users[idx].password = bcrypt.hashSync(password, 10);
+  if (typeof role !== 'undefined') data.users[idx].role = role;
+  if (typeof active !== 'undefined') data.users[idx].active = active;
   data.users[idx].updatedAt = new Date().toISOString();
 
   await saveData(data);
@@ -101,5 +117,5 @@ app.delete('/api/users/:id', async (req, res) => {
   res.json(safeUser(removed));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.argv[2] || process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`JSON auth server listening on port ${PORT}`));
