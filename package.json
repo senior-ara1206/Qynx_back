@@ -1,7 +1,7 @@
 {
   "name": "json-auth-server",
   "version": "1.0.0",
-  "description": "Simple JSON-backed auth server that stores users in auth.json",
+  "description": "Auth server with MongoDB",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,7 +13,8 @@
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "mongoose": "^8.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
