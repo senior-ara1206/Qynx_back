@@ -27,6 +27,7 @@ const userSchema = new mongoose.Schema(
 const User = mongoose.model('User', userSchema);
 
 const INVESTMENT_STATUS = { ONGOING: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
+const TRADING_PERIOD = [30, 90, 180];
 
 const investmentSchema = new mongoose.Schema(
   {
@@ -43,6 +44,24 @@ const investmentSchema = new mongoose.Schema(
 );
 
 const Investment = mongoose.model('Investment', investmentSchema);
+
+const TRADING_STATUS = { ONGOING: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
+
+const tradingSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    user_id: { type: String, required: true },
+    wallet_address: { type: String, required: true },
+    token: { type: String, required: true },
+    amount: { type: Number, required: true },
+    type: { type: String, required: true },
+    status: { type: Number, required: true, enum: [0, 1, 2, 3], default: TRADING_STATUS.PENDING },
+    end_date: { type: Date },
+  },
+  { timestamps: true }
+);
+
+const Trading = mongoose.model('Trading', tradingSchema);
 
 function safeUser(u) {
   const doc = u.toObject ? u.toObject() : u;
@@ -218,6 +237,51 @@ app.post('/api/investments', async (req, res) => {
       end_date,
     });
     res.status(201).json(investment);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Tradings ---
+app.get('/api/users/:userId/tradings', async (req, res) => {
+  try {
+    const tradings = await Trading.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
+    res.json(tradings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/tradings/:id', async (req, res) => {
+  try {
+    const trading = await Trading.findOne({ id: req.params.id });
+    if (!trading) return res.status(404).json({ error: 'Trading not found' });
+    res.json(trading);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tradings', async (req, res) => {
+  const { user_id, wallet_address, token, amount, type, status } = req.body || {};
+  if (!user_id || !wallet_address || token == null || amount == null || type == null) {
+    return res.status(400).json({ error: 'user_id, wallet_address, token, amount, and type are required' });
+  }
+  try {
+    const periodDays = Number(TRADING_PERIOD[type]);
+    const createdAt = new Date();
+    const end_date = new Date(createdAt.getTime() + periodDays * 24 * 60 * 60 * 1000);
+    const trading = await Trading.create({
+      id: randomUUID(),
+      user_id,
+      wallet_address,
+      token: String(token),
+      amount: Number(amount),
+      type: String(type),
+      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : TRADING_STATUS.ONGOING,
+      end_date,
+    });
+    res.status(201).json(trading);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
