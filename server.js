@@ -96,6 +96,17 @@ app.get('/api/wallets', async (req, res) => {
   }
 });
 
+app.get('/api/users/:id/referrals', async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.id });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const referrals = await User.find({ referer: user.referralCode }).lean();
+    res.json(referrals.map((u) => safeUser(u)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findOne({ id: req.params.id });
