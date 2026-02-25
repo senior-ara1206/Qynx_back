@@ -198,6 +198,15 @@ app.delete('/api/users/:id', async (req, res) => {
 });
 
 // --- Investments ---
+app.get('/api/users/:userId/investments', async (req, res) => {
+  try {
+    const investments = await Investment.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
+    res.json(investments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/investments', async (req, res) => {
   try {
     const investments = await Investment.find().sort({ createdAt: -1 });
