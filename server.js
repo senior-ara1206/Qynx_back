@@ -20,6 +20,8 @@ const userSchema = new mongoose.Schema(
     role: { type: String, default: 'user' },
     loginCount: { type: Number, default: 0 },
     wallets: { type: [String], default: [] },
+    referer: { type: String, default: '' },
+    referralCode: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -105,7 +107,7 @@ app.get('/api/users/:id', async (req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
-  const { name, email, password } = req.body || {};
+  const { name, email, password, referer } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
 
   try {
@@ -122,7 +124,10 @@ app.post('/api/register', async (req, res) => {
       role: 'user',
       loginCount: 0,
       wallets: [],
+      referer: referer ? String(referer) : '',
     });
+    user.referralCode = user.id.toString().slice(-5);
+    await user.save();
     res.status(201).json(safeUser(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -252,6 +257,15 @@ app.post('/api/investments', async (req, res) => {
 });
 
 // --- Tradings ---
+app.get('/api/tradings', async (req, res) => {
+  try {
+    const tradings = await Trading.find().sort({ createdAt: -1 });
+    res.json(tradings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/users/:userId/tradings', async (req, res) => {
   try {
     const tradings = await Trading.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
