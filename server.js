@@ -347,6 +347,29 @@ app.get('/api/withdrawals', async (req, res) => {
   }
 });
 
+app.post('/api/withdrawals', async (req, res) => {
+  const { user_id, category, wallet_address, status } = req.body || {};
+  if (!user_id || !category || !wallet_address) {
+    return res.status(400).json({ error: 'user_id, category, and wallet_address are required' });
+  }
+  if (!WITHDRAWAL_CATEGORY.includes(category)) {
+    return res.status(400).json({ error: `category must be one of: ${WITHDRAWAL_CATEGORY.join(', ')}` });
+  }
+  try {
+    const statusVal = status && WITHDRAWAL_STATUS.includes(status) ? status : 'pending';
+    const withdrawal = await Withdrawal.create({
+      id: randomUUID(),
+      user_id,
+      category,
+      wallet_address: String(wallet_address),
+      status: statusVal,
+    });
+    res.status(201).json(withdrawal);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/users/:userId/withdrawals', async (req, res) => {
   try {
     const withdrawals = await Withdrawal.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
