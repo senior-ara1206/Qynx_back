@@ -65,6 +65,22 @@ const tradingSchema = new mongoose.Schema(
 
 const Trading = mongoose.model('Trading', tradingSchema);
 
+const WITHDRAWAL_CATEGORY = ['investment', 'trading', 'plan bonus', 'referral bonus'];
+const WITHDRAWAL_STATUS = ['pending', 'approved', 'withdrawed'];
+
+const withdrawalSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true, unique: true },
+    user_id: { type: String, required: true },
+    category: { type: String, required: true, enum: WITHDRAWAL_CATEGORY },
+    wallet_address: { type: String, required: true },
+    status: { type: String, required: true, enum: WITHDRAWAL_STATUS, default: 'pending' },
+  },
+  { timestamps: true }
+);
+
+const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
+
 function safeUser(u) {
   const doc = u.toObject ? u.toObject() : u;
   const { password, ...rest } = doc;
@@ -316,6 +332,56 @@ app.post('/api/tradings', async (req, res) => {
       end_date,
     });
     res.status(201).json(trading);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Withdrawals ---
+app.get('/api/withdrawals', async (req, res) => {
+  try {
+    const withdrawals = await Withdrawal.find().sort({ createdAt: -1 });
+    res.json(withdrawals);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/users/:userId/withdrawals', async (req, res) => {
+  try {
+    const withdrawals = await Withdrawal.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
+    res.json(withdrawals);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/withdrawals/:id', async (req, res) => {
+  try {
+    const withdrawal = await Withdrawal.findOne({ id: req.params.id });
+    if (!withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
+    res.json(withdrawal);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/withdrawals/:id', async (req, res) => {
+  const { status, category, wallet_address } = req.body || {};
+  try {
+    const withdrawal = await Withdrawal.findOne({ id: req.params.id });
+    if (!withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
+    if (status !== undefined) {
+      if (!WITHDRAWAL_STATUS.includes(status)) return res.status(400).json({ error: `status must be one of: ${WITHDRAWAL_STATUS.join(', ')}` });
+      withdrawal.status = status;
+    }
+    if (category !== undefined) {
+      if (!WITHDRAWAL_CATEGORY.includes(category)) return res.status(400).json({ error: `category must be one of: ${WITHDRAWAL_CATEGORY.join(', ')}` });
+      withdrawal.category = category;
+    }
+    if (wallet_address !== undefined) withdrawal.wallet_address = String(wallet_address);
+    await withdrawal.save();
+    res.json(withdrawal);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
