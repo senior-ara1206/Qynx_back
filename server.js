@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema(
 
 const User = mongoose.model('User', userSchema);
 
-const INVESTMENT_STATUS = { ONGOING: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
+const INVESTMENT_STATUS = { ACTIVE: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
 const TRADING_PERIOD = [30, 90, 180];
 
 const investmentSchema = new mongoose.Schema(
@@ -47,7 +47,7 @@ const investmentSchema = new mongoose.Schema(
 
 const Investment = mongoose.model('Investment', investmentSchema);
 
-const TRADING_STATUS = { ONGOING: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
+const TRADING_STATUS = { ACTIVE: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
 
 const tradingSchema = new mongoose.Schema(
   {
@@ -258,7 +258,7 @@ app.post('/api/investments', async (req, res) => {
       token: String(token),
       amount: Number(amount),
       period: periodDays,
-      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : INVESTMENT_STATUS.PENDING,
+      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : INVESTMENT_STATUS.ACTIVE,
       end_date,
     });
     res.status(201).json(investment);
@@ -312,7 +312,7 @@ app.post('/api/tradings', async (req, res) => {
       token: String(token),
       amount: Number(amount),
       type: String(type),
-      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : TRADING_STATUS.ONGOING,
+      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : TRADING_STATUS.ACTIVE,
       end_date,
     });
     res.status(201).json(trading);
