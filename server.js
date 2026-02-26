@@ -10,6 +10,99 @@ app.use(express.json());
 
 const MONGODB_URI = "mongodb+srv://michaelturner8011_db_user:qynx1234@cluster0.ji1p1jj.mongodb.net/?appName=Cluster0";
 
+const TOTAL_INVESTMENTS = ["153.8K","168.5K","187.7K","205.4K","230.2K","255.7K","285.5K","320K.9","360.2K","400.1K","430K","470.6K","530K","610K","0.7M","0.82M","0.9M","1.02M","1.12M","1.2M","1.3M","1.45M","1.6M","1.8M","1.95M","2.1M","2.25M","2.4M","2.48M","2.5M","2.65M","2.8M","3M","3.2M","3.4M","3.65M","3.9M","4.1M","4.4M","4.5M","4.95M","5.1M","5.7M","5.75M","6.55M","6.65M","7.15M","7.35M","7.6M","8M"]
+const TOTAL_TRADINGS = ["100K","118.6K","135.3K","158.7K","185K","215.5K","252.8K","295K","340.2K","395.3K","455.9K","520K","600K","690.4K","780K","880.8K","1M","1.15M","1.3M","1.45M","1.65M","1.85M","2.1M","2.35M","2.6M","2.9M","3.25M","3.54M","3.81M","4.14M","4.43M","4.758M","5.17M","5.5M","5.9M","6.33M","6.72M","7.1M","7.54M","7.96M","8.39M","8.6M","8.95M","9.25M","9.5M","9.7M","9.85M","9.92M","9.96M","10M"]
+const TOTAL_PROFITS = ["10K","11.5K","13K","15.9K","17.5K","20K","23K","26.6K","29.8K","33.1K","37.3K","42.3K","47.6K","52.4K","58.9K","64K","71.2K","78K","86.6K","94K","103K","112.7K","122K","132K","142K","153K","164K","175K","186K","197K","208K","218K","228K","238K","242K","245K","247K","248K","248.5K","249K","249.2K","249.5K","249.6K","249.8K","249.9K","249.95K","250K","250K","250K","250K"]
+const TOTAL_QYNX_TOKEN_BALANCE = ["80K","92K","108K","125K","145K","168K","195K","225K","258K","295K","335K","380K","430K","485K","545K","610K","680K","755K","835K","920K","1.01M","1.1M","1.2M","1.3M","1.4M","1.5M","1.58M","1.66M","1.74M","1.82M","1.9M","1.97M","2.04M","2.1M","2.16M","2.22M","2.28M","2.34M","2.39M","2.44M","2.49M","2.53M","2.57M","2.61M","2.64M","2.67M","2.69M","2.71M","2.72M","2.73M"]
+const RATIOS_FOR_USER = [0.42,1.5,0.84,3.4,5.0,0.23,0.67,8.19,0.33,2.1,0.58,0.76,5.29,0.92,1.18,0.51,4.37,1.12,0.27,0.63,3.4,0.21,0.49,7.72,0.16,0.88,3.35,0.54,0.26,1.78,0.31,0.69,0.22,4.6,0.47,2.39,0.95,0.62,0.25,2.9,0.17,0.73,0.45,0.36,6.8,0.28,0.57,0.2,0.81,9.3]
+const LAUNCH_DATE = new Date("2026-02-24")
+
+const getTotalInvestments = (date) => {
+  const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  return TOTAL_INVESTMENTS[index];
+}
+
+const getTotalTradings = (date) => {
+  const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  return TOTAL_TRADINGS[index];
+}
+
+const getTotalProfits = (date) => {
+  const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  return TOTAL_PROFITS[index];
+}
+
+const getTotalQynxTokenBalance = (date) => {
+  const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  return TOTAL_QYNX_TOKEN_BALANCE[index];
+}
+
+/** Parse expression string to number (e.g. "153.8K" -> 153800, "0.7M" -> 700000) */
+const parseExpression = (str) => {
+  if (str == null || typeof str !== 'string') return NaN;
+  const m = str.trim().match(/^([\d.]+)\s*([KkMm])?$/);
+  if (!m) return NaN;
+  let n = parseFloat(m[1]);
+  if (Number.isNaN(n)) return NaN;
+  const suffix = (m[2] || '').toUpperCase();
+  if (suffix === 'K') n *= 1e3;
+  else if (suffix === 'M') n *= 1e6;
+  return n;
+};
+
+/**
+ * Get the ratio of change compared to the day before.
+ * @param {string[]} series - Array of expression strings (e.g. TOTAL_INVESTMENTS)
+ * @param {number} dayIndex - 0-based day index (0 = launch day)
+ * @returns {number|null} Relative change (e.g. 0.1 = 10% increase), or null for day 0 (no previous day)
+ */
+const getChangeRatioVsPreviousDay = (series, dayIndex) => {
+  if (!Array.isArray(series) || dayIndex <= 0 || dayIndex >= series.length) return null;
+  const prev = parseExpression(series[dayIndex - 1]);
+  const curr = parseExpression(series[dayIndex]);
+  if (prev === 0 || !Number.isFinite(prev) || !Number.isFinite(curr)) return null;
+  return (curr - prev) / prev;
+};
+
+/** Get change ratio for a given date (ratio vs previous day). */
+const getInvestmentChangeRatio = (date) =>
+  getChangeRatioVsPreviousDay(
+    TOTAL_INVESTMENTS,
+    Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24))
+  );
+const getTradingChangeRatio = (date) =>
+  getChangeRatioVsPreviousDay(
+    TOTAL_TRADINGS,
+    Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24))
+  );
+const getProfitChangeRatio = (date) =>
+  getChangeRatioVsPreviousDay(
+    TOTAL_PROFITS,
+    Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24))
+  );
+const getQynxTokenBalanceChangeRatio = (date) =>
+  getChangeRatioVsPreviousDay(
+    TOTAL_QYNX_TOKEN_BALANCE,
+    Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+/** Get portfolio (investments + tradings) change ratio vs previous day for a given date. */
+const getPortfolioChangeRatio = (date) => {
+  const dayIndex = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  if (dayIndex <= 0 || dayIndex >= TOTAL_INVESTMENTS.length || dayIndex >= TOTAL_TRADINGS.length) return null;
+
+  const prevInvestment = parseExpression(TOTAL_INVESTMENTS[dayIndex - 1]);
+  const prevTrading = parseExpression(TOTAL_TRADINGS[dayIndex - 1]);
+  const currInvestment = parseExpression(TOTAL_INVESTMENTS[dayIndex]);
+  const currTrading = parseExpression(TOTAL_TRADINGS[dayIndex]);
+
+  const prevTotal = prevInvestment + prevTrading;
+  const currTotal = currInvestment + currTrading;
+
+  if (!Number.isFinite(prevTotal) || prevTotal === 0 || !Number.isFinite(currTotal)) return null;
+  return (currTotal - prevTotal) / prevTotal;
+};
+
 const userSchema = new mongoose.Schema(
   {
     id: { type: String, required: true, unique: true },
@@ -408,6 +501,32 @@ app.put('/api/withdrawals/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// --- Stats: day-over-day change ratios ---
+app.get('/api/stats/change-ratios', (req, res) => {
+  const date = req.query.date ? new Date(req.query.date) : new Date();
+  const dayIndex = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  if (dayIndex < 0 || dayIndex >= TOTAL_INVESTMENTS.length) {
+    return res.json({
+      date: date.toISOString().slice(0, 10),
+      dayIndex,
+      investment: null,
+      trading: null,
+      profit: null,
+      portfolio: null,
+      qynxTokenBalance: null,
+    });
+  }
+  res.json({
+    date: date.toISOString().slice(0, 10),
+    dayIndex,
+    investment: getInvestmentChangeRatio(date),
+    trading: getTradingChangeRatio(date),
+    profit: getProfitChangeRatio(date),
+    portfolio: getPortfolioChangeRatio(date),
+    qynxTokenBalance: getQynxTokenBalanceChangeRatio(date),
+  });
 });
 
 const PORT = process.argv[2] || process.env.PORT || 3000;
