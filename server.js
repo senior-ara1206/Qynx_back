@@ -14,6 +14,8 @@ const TOTAL_INVESTMENTS = ["153.8K","168.5K","187.7K","205.4K","230.2K","255.7K"
 const TOTAL_TRADINGS = ["100K","118.6K","135.3K","158.7K","185K","215.5K","252.8K","295K","340.2K","395.3K","455.9K","520K","600K","690.4K","780K","880.8K","1M","1.15M","1.3M","1.45M","1.65M","1.85M","2.1M","2.35M","2.6M","2.9M","3.25M","3.54M","3.81M","4.14M","4.43M","4.758M","5.17M","5.5M","5.9M","6.33M","6.72M","7.1M","7.54M","7.96M","8.39M","8.6M","8.95M","9.25M","9.5M","9.7M","9.85M","9.92M","9.96M","10M"]
 const TOTAL_PROFITS = ["10K","11.5K","13K","15.9K","17.5K","20K","23K","26.6K","29.8K","33.1K","37.3K","42.3K","47.6K","52.4K","58.9K","64K","71.2K","78K","86.6K","94K","103K","112.7K","122K","132K","142K","153K","164K","175K","186K","197K","208K","218K","228K","238K","242K","245K","247K","248K","248.5K","249K","249.2K","249.5K","249.6K","249.8K","249.9K","249.95K","250K","250K","250K","250K"]
 const TOTAL_QYNX_TOKEN_BALANCE = ["80K","92K","108K","125K","145K","168K","195K","225K","258K","295K","335K","380K","430K","485K","545K","610K","680K","755K","835K","920K","1.01M","1.1M","1.2M","1.3M","1.4M","1.5M","1.58M","1.66M","1.74M","1.82M","1.9M","1.97M","2.04M","2.1M","2.16M","2.22M","2.28M","2.34M","2.39M","2.44M","2.49M","2.53M","2.57M","2.61M","2.64M","2.67M","2.69M","2.71M","2.72M","2.73M"]
+/** Daily total users count (50 days): 60 → 7500, roughly increasing */
+const TOTAL_USERS = [60,184,334,510,712,940,1041,1168,1321,1500,1705,1783,1887,2017,2173,2355,2563,2644,2751,2884,3043,3228,3439,3523,3633,3769,3931,4119,4333,4420,4533,4672,4837,5028,5245,5335,5451,5593,5761,5955,6175,6268,6387,6532,6703,6900,7123,7219,7341,7500]
 const RATIOS_FOR_USER = [0.42,1.5,0.84,3.4,5.0,0.23,0.67,8.19,0.33,2.1,0.58,0.76,5.29,0.92,1.18,0.51,4.37,1.12,0.27,0.63,3.4,0.21,0.49,7.72,0.16,0.88,3.35,0.54,0.26,1.78,0.31,0.69,0.22,4.6,0.47,2.39,0.95,0.62,0.25,2.9,0.17,0.73,0.45,0.36,6.8,0.28,0.57,0.2,0.81,9.3]
 const LAUNCH_DATE = new Date("2026-02-24")
 
@@ -35,6 +37,12 @@ const getTotalProfits = (date) => {
 const getTotalQynxTokenBalance = (date) => {
   const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
   return TOTAL_QYNX_TOKEN_BALANCE[index];
+}
+
+const getTotalUsers = (date) => {
+  const index = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  if (index < 0 || index >= TOTAL_USERS.length) return null;
+  return TOTAL_USERS[index];
 }
 
 /** Parse expression string to number (e.g. "153.8K" -> 153800, "0.7M" -> 700000) */
@@ -103,6 +111,16 @@ const getPortfolioChangeRatio = (date) => {
   return (currTotal - prevTotal) / prevTotal;
 };
 
+/** Get total users change ratio vs previous day (numeric series). */
+const getUsersChangeRatio = (date) => {
+  const dayIndex = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
+  if (dayIndex <= 0 || dayIndex >= TOTAL_USERS.length) return null;
+  const prev = TOTAL_USERS[dayIndex - 1];
+  const curr = TOTAL_USERS[dayIndex];
+  if (prev === 0 || !Number.isFinite(prev) || !Number.isFinite(curr)) return null;
+  return (curr - prev) / prev;
+};
+
 const userSchema = new mongoose.Schema(
   {
     id: { type: String, required: true, unique: true },
@@ -115,6 +133,7 @@ const userSchema = new mongoose.Schema(
     wallets: { type: [String], default: [] },
     referer: { type: String, default: '' },
     referralCode: { type: String, default: '' },
+    tokenAmount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
@@ -168,6 +187,9 @@ const withdrawalSchema = new mongoose.Schema(
     category: { type: String, required: true, enum: WITHDRAWAL_CATEGORY },
     wallet_address: { type: String, required: true },
     status: { type: String, required: true, enum: WITHDRAWAL_STATUS, default: 'pending' },
+    amount: { type: String, default: '' },
+    currency: { type: String, default: '' },
+    activity_id: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -276,7 +298,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.put('/api/users/:id', async (req, res) => {
-  const { name, email, password, role, active } = req.body || {};
+  const { name, email, password, role, active, tokenAmount, wallet } = req.body || {};
 
   try {
     const user = await User.findOne({ id: req.params.id });
@@ -291,6 +313,15 @@ app.put('/api/users/:id', async (req, res) => {
     if (typeof password !== 'undefined' && password !== '') user.password = bcrypt.hashSync(password, 10);
     if (typeof role !== 'undefined') user.role = role;
     if (typeof active !== 'undefined') user.active = active;
+    if (typeof tokenAmount !== 'undefined') user.tokenAmount = tokenAmount;
+    if (typeof wallet === 'string' && wallet.trim() !== '') {
+      const addr = wallet.trim();
+      const lower = addr.toLowerCase();
+      const existing = (user.wallets || []).map((w) => String(w).trim().toLowerCase());
+      if (!existing.includes(lower)) {
+        user.wallets.push(addr);
+      }
+    }
     await user.save();
 
     res.json(safeUser(user));
@@ -441,7 +472,7 @@ app.get('/api/withdrawals', async (req, res) => {
 });
 
 app.post('/api/withdrawals', async (req, res) => {
-  const { user_id, category, wallet_address, status } = req.body || {};
+  const { user_id, category, wallet_address, status, amount, currency, activity_id } = req.body || {};
   if (!user_id || !category || !wallet_address) {
     return res.status(400).json({ error: 'user_id, category, and wallet_address are required' });
   }
@@ -456,6 +487,9 @@ app.post('/api/withdrawals', async (req, res) => {
       category,
       wallet_address: String(wallet_address),
       status: statusVal,
+      amount: amount != null ? String(amount) : '',
+      currency: currency != null ? String(currency) : '',
+      activity_id: activity_id != null ? String(activity_id) : '',
     });
     res.status(201).json(withdrawal);
   } catch (err) {
@@ -503,29 +537,55 @@ app.put('/api/withdrawals/:id', async (req, res) => {
   }
 });
 
-// --- Stats: day-over-day change ratios ---
-app.get('/api/stats/change-ratios', (req, res) => {
+app.delete('/api/withdrawals/:id', async (req, res) => {
+  try {
+    const deleted = await Withdrawal.findOneAndDelete({ id: req.params.id });
+    if (!deleted) return res.status(404).json({ error: 'Withdrawal not found' });
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Stats: full statistic data for frontend ---
+app.get('/api/stats', (req, res) => {
   const date = req.query.date ? new Date(req.query.date) : new Date();
   const dayIndex = Math.floor((date.getTime() - LAUNCH_DATE.getTime()) / (1000 * 60 * 60 * 24));
   if (dayIndex < 0 || dayIndex >= TOTAL_INVESTMENTS.length) {
     return res.json({
       date: date.toISOString().slice(0, 10),
       dayIndex,
-      investment: null,
-      trading: null,
-      profit: null,
-      portfolio: null,
-      qynxTokenBalance: null,
+      totalInvestment: null,
+      totalTrading: null,
+      totalProfit: null,
+      totalQynxTokenBalance: null,
+      totalUsers: null,
+      changeRatios: {
+        investment: null,
+        trading: null,
+        profit: null,
+        qynxTokenBalance: null,
+        totalUsers: null,
+        portfolio: null,
+      },
     });
   }
   res.json({
     date: date.toISOString().slice(0, 10),
     dayIndex,
-    investment: getInvestmentChangeRatio(date),
-    trading: getTradingChangeRatio(date),
-    profit: getProfitChangeRatio(date),
-    portfolio: getPortfolioChangeRatio(date),
-    qynxTokenBalance: getQynxTokenBalanceChangeRatio(date),
+    totalInvestment: getTotalInvestments(date),
+    totalTrading: getTotalTradings(date),
+    totalProfit: getTotalProfits(date),
+    totalQynxTokenBalance: getTotalQynxTokenBalance(date),
+    totalUsers: getTotalUsers(date),
+    changeRatios: {
+      investment: getInvestmentChangeRatio(date),
+      trading: getTradingChangeRatio(date),
+      profit: getProfitChangeRatio(date),
+      qynxTokenBalance: getQynxTokenBalanceChangeRatio(date),
+      totalUsers: getUsersChangeRatio(date),
+      portfolio: getPortfolioChangeRatio(date),
+    },
   });
 });
 
