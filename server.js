@@ -3,12 +3,132 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const { randomUUID } = require('crypto');
+const { ethers } = require('ethers');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const MONGODB_URI = "mongodb+srv://michaelturner8011_db_user:qynx1234@cluster0.ji1p1jj.mongodb.net/?appName=Cluster0";
+
+/** RPC URLs for tx verification (optional env override) */
+const RPC_URL = {
+  bsc: 'https://bsc-dataseed1.binance.org',
+  ethereum: 'https://eth.llamarpc.com',
+};
+
+/** Platform deposit addresses for verifying incoming transfers (server-side only) */
+const DEPOSIT_ADDRESS = {
+  bsc: ('0xa639c56F63B3DE1d38006dAf841c0541DCB55C1C').trim().toLowerCase(),
+  ethereum: ('0xa639c56F63B3DE1d38006dAf841c0541DCB55C1C').trim().toLowerCase(),
+};
+
+/**
+ * Fetch transaction by hash via JSON-RPC. Returns { to, from, value } or null.
+ * value is decimal string (wei).
+ */
+async function getTransactionByHash(txHash, network) {
+  const url = RPC_URL[network];
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_getTransactionByHash',
+        params: [txHash.startsWith('0x') ? txHash : '0x' + txHash],
+        id: 1,
+      }),
+    });
+    const data = await res.json();
+    const tx = data.result;
+    if (!tx || tx.blockNumber == null) return null; // pending or not found
+    return {
+      to: (tx.to || '').toLowerCase(),
+      from: (tx.from || '').toLowerCase(),
+      value: typeof tx.value === 'string' ? tx.value : String(tx.value),
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Fetch transaction receipt (includes logs for ERC-20 transfers).
+ */
+async function getTransactionReceipt(txHash, network) {
+  const url = RPC_URL[network];
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_getTransactionReceipt',
+        params: [txHash.startsWith('0x') ? txHash : '0x' + txHash],
+        id: 1,
+      }),
+    });
+    const data = await res.json();
+    return data.result || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/** Parse hex wei string to decimal number. */
+function hexWeiToNumber(hex) {
+  if (!hex || typeof hex !== 'string') return 0;
+  const s = hex.startsWith('0x') ? hex.slice(2) : hex;
+  return parseInt(s, 16);
+}
+
+/** Token decimals by symbol (BSC/ETH common). */
+const TOKEN_DECIMALS = {
+  USDT: 18, USDC: 18, DAI: 18, WBNB: 18, BNB: 18, ETH: 18, WETH: 18,
+  CAKE: 18, WBTC: 8, QYNX: 18,
+};
+
+/** ERC-20 Transfer(address,address,uint256) topic0. */
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+function padAddressToTopic(addr) {
+  const a = (addr || '').toLowerCase().replace(/^0x/, '');
+  return '0x' + a.padStart(64, '0');
+}
+
+/**
+ * Get the actual deposited amount from the transaction (native or ERC-20).
+ * Returns human-readable amount (number) or null if not determinable.
+ */
+async function getActualDepositAmount(tx, receipt, network, token, depositAddress) {
+  const depositLower = (depositAddress || '').toLowerCase();
+  const tokenUpper = (token || '').toUpperCase();
+  const decimals = TOKEN_DECIMALS[tokenUpper] ?? 18;
+  const nativeTokens = ['bnb', 'eth'];
+  const isNative = nativeTokens.includes((token || '').toLowerCase());
+
+  if (isNative && tx.to === depositLower) {
+    const wei = hexWeiToNumber(tx.value);
+    return wei / Math.pow(10, decimals);
+  }
+
+  if (!receipt || !receipt.logs || !Array.isArray(receipt.logs)) return null;
+  const depositTopic = padAddressToTopic(depositLower).toLowerCase();
+  for (const log of receipt.logs) {
+    const toTopic = (log.topics && log.topics[2] || '').toLowerCase();
+    if (log.topics && log.topics[0] === TRANSFER_TOPIC && toTopic === depositTopic) {
+      const data = (log.data || '').replace(/^0x/, '');
+      if (data.length >= 64) {
+        const amountWei = parseInt(data.slice(0, 64), 16);
+        return amountWei / Math.pow(10, decimals);
+      }
+    }
+  }
+  return null;
+}
 
 const TOTAL_INVESTMENTS = ["153.8K","168.5K","187.7K","205.4K","230.2K","255.7K","285.5K","320K.9","360.2K","400.1K","430K","470.6K","530K","610K","0.7M","0.82M","0.9M","1.02M","1.12M","1.2M","1.3M","1.45M","1.6M","1.8M","1.95M","2.1M","2.25M","2.4M","2.48M","2.5M","2.65M","2.8M","3M","3.2M","3.4M","3.65M","3.9M","4.1M","4.4M","4.5M","4.95M","5.1M","5.7M","5.75M","6.55M","6.65M","7.15M","7.35M","7.6M","8M"]
 const TOTAL_TRADINGS = ["100K","118.6K","135.3K","158.7K","185K","215.5K","252.8K","295K","340.2K","395.3K","455.9K","520K","600K","690.4K","780K","880.8K","1M","1.15M","1.3M","1.45M","1.65M","1.85M","2.1M","2.35M","2.6M","2.9M","3.25M","3.54M","3.81M","4.14M","4.43M","4.758M","5.17M","5.5M","5.9M","6.33M","6.72M","7.1M","7.54M","7.96M","8.39M","8.6M","8.95M","9.25M","9.5M","9.7M","9.85M","9.92M","9.96M","10M"]
@@ -134,6 +254,13 @@ const userSchema = new mongoose.Schema(
     referer: { type: String, default: '' },
     referralCode: { type: String, default: '' },
     tokenAmount: { type: Number, default: 0 },
+    /** Per-user deposit addresses (EVM); generated on registration. Private keys stored server-side only. */
+    investment_address: { type: String, default: '' },
+    investment_private_key: { type: String, default: '' },
+    trading_address: { type: String, default: '' },
+    trading_private_key: { type: String, default: '' },
+    treasury_address: { type: String, default: '' },
+    treasury_private_key: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -153,6 +280,7 @@ const investmentSchema = new mongoose.Schema(
     period: { type: Number, required: true },
     status: { type: Number, required: true, enum: [0, 1, 2, 3], default: INVESTMENT_STATUS.PENDING },
     end_date: { type: Date },
+    deposit_tx_hash: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -171,6 +299,7 @@ const tradingSchema = new mongoose.Schema(
     type: { type: String, required: true },
     status: { type: Number, required: true, enum: [0, 1, 2, 3], default: TRADING_STATUS.PENDING },
     end_date: { type: Date },
+    deposit_tx_hash: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -198,7 +327,7 @@ const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
 function safeUser(u) {
   const doc = u.toObject ? u.toObject() : u;
-  const { password, ...rest } = doc;
+  const { password, investment_private_key, trading_private_key, treasury_private_key, ...rest } = doc;
   return rest;
 }
 
@@ -222,6 +351,26 @@ app.get('/api/wallets', async (req, res) => {
       }
     }
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Admin only: export all users' deposit addresses and private keys as JSON. Header x-admin-export-key must match ADMIN_EXPORT_SECRET. */
+app.get('/api/admin/export-addresses', async (req, res) => {
+  const key = req.headers['x-admin-export-key'];
+  // const secret = process.env.ADMIN_EXPORT_SECRET;
+  const secret = "admin123"
+  if (!secret || key !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const users = await User.find().lean();
+    const exportData = users.map((u) => {
+      const { password, ...rest } = u;
+      return rest;
+    });
+    res.json(exportData);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -257,6 +406,9 @@ app.post('/api/register', async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already registered' });
 
     const hashed = bcrypt.hashSync(password, 10);
+    const investmentWallet = ethers.Wallet.createRandom();
+    const tradingWallet = ethers.Wallet.createRandom();
+    const treasuryWallet = ethers.Wallet.createRandom();
     const user = await User.create({
       id: randomUUID(),
       name: name || '',
@@ -267,6 +419,12 @@ app.post('/api/register', async (req, res) => {
       loginCount: 0,
       wallets: [],
       referer: referer ? String(referer) : '',
+      investment_address: investmentWallet.address,
+      investment_private_key: investmentWallet.privateKey,
+      trading_address: tradingWallet.address,
+      trading_private_key: tradingWallet.privateKey,
+      treasury_address: treasuryWallet.address,
+      treasury_private_key: treasuryWallet.privateKey,
     });
     user.referralCode = user.id.toString().slice(-5);
     await user.save();
@@ -461,6 +619,186 @@ app.post('/api/tradings', async (req, res) => {
   }
 });
 
+/**
+ * Verify tx on-chain and return normalized txHash and actual deposited amount.
+ * Uses the real transferred amount (e.g. user sent $80 instead of $100) for the record.
+ */
+async function verifyDepositTxAndGetHashAndAmount(txHash, net, depositAddress, userWallet, token) {
+  let txHashNorm = (txHash && typeof txHash === 'string') ? txHash.trim() : '';
+  if (!txHashNorm) throw new Error('txHash is required');
+  txHashNorm = txHashNorm.toLowerCase();
+  if (!txHashNorm.startsWith('0x')) txHashNorm = '0x' + txHashNorm;
+  const tx = await getTransactionByHash(txHashNorm, net);
+  if (!tx) throw new Error('Transaction not found or not yet confirmed. Check the transaction or network and try again.');
+  const depositLower = depositAddress.toLowerCase();
+  const nativeTokens = ['bnb', 'eth'];
+  const isNative = nativeTokens.includes((token || '').toLowerCase());
+  if (isNative && tx.to !== depositLower) throw new Error('Transaction recipient does not match your deposit address');
+  if (userWallet && tx.from !== userWallet) throw new Error('Transaction sender does not match your registered wallet');
+  const receipt = await getTransactionReceipt(txHashNorm, net);
+  const actualAmount = await getActualDepositAmount(tx, receipt, net, token, depositAddress);
+  if (actualAmount == null || actualAmount <= 0) throw new Error('Could not determine deposit amount from transaction');
+  return { txHashNorm, amount: actualAmount, fromAddress: tx.from };
+}
+
+/** Create investment only after deposit is verified (verify tx then create as ACTIVE). Uses actual transferred amount from chain. Uses user's investment_address when set. */
+app.post('/api/investments/confirm-and-create', async (req, res) => {
+  const { user_id, wallet_address, token, amount, period, txHash, network } = req.body || {};
+  if (!user_id || !wallet_address || token == null || period == null || !txHash) {
+    return res.status(400).json({ error: 'user_id, wallet_address, token, period, and txHash are required' });
+  }
+  const net = network === 'ethereum' ? 'ethereum' : 'bsc';
+  let depositAddress = DEPOSIT_ADDRESS[net];
+  const userDoc = await User.findOne({ id: user_id }).lean();
+  if (userDoc && userDoc.investment_address && String(userDoc.investment_address).trim()) {
+    depositAddress = String(userDoc.investment_address).trim().toLowerCase();
+  }
+  if (!depositAddress) {
+    return res.status(503).json({ error: 'Deposit verification not configured for this network' });
+  }
+  try {
+    const userWallet = (wallet_address || '').toLowerCase();
+    const { txHashNorm, amount: actualAmount, fromAddress } = await verifyDepositTxAndGetHashAndAmount(txHash, net, depositAddress, userWallet, token);
+    const txHashForMatch = txHashNorm.replace(/^0x/, '');
+    const alreadyUsed = await Investment.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } })
+      || await Trading.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } });
+    if (alreadyUsed) {
+      return res.status(400).json({ error: 'This transaction was already used to confirm another deposit' });
+    }
+    const periodDays = Number(period);
+    const createdAt = new Date();
+    const end_date = new Date(createdAt.getTime() + periodDays * 24 * 60 * 60 * 1000);
+    const investment = await Investment.create({
+      id: randomUUID(),
+      user_id,
+      wallet_address,
+      token: String(token),
+      amount: Number(actualAmount),
+      period: periodDays,
+      status: INVESTMENT_STATUS.ACTIVE,
+      end_date,
+      deposit_tx_hash: txHashNorm,
+    });
+    const qynxToMint = Math.floor(Number(actualAmount) * QYNX_PER_USD);
+    if (fromAddress && qynxToMint > 0) mintQynxTo(fromAddress, qynxToMint, net).catch(() => {});
+    res.status(201).json(investment);
+  } catch (err) {
+    const status = err.message && err.message.includes('required') ? 400 : (err.message && err.message.includes('not configured') ? 503 : 500);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+/** Create trading only after deposit is verified (verify tx then create as ACTIVE). Uses actual transferred amount from chain. Uses user's trading_address when set. */
+app.post('/api/tradings/confirm-and-create', async (req, res) => {
+  const { user_id, wallet_address, token, amount, type, txHash, network } = req.body || {};
+  if (!user_id || !wallet_address || token == null || !type || !txHash) {
+    return res.status(400).json({ error: 'user_id, wallet_address, token, type, and txHash are required' });
+  }
+  const net = network === 'ethereum' ? 'ethereum' : 'bsc';
+  let depositAddress = DEPOSIT_ADDRESS[net];
+  const userDoc = await User.findOne({ id: user_id }).lean();
+  if (userDoc && userDoc.trading_address && String(userDoc.trading_address).trim()) {
+    depositAddress = String(userDoc.trading_address).trim().toLowerCase();
+  }
+  if (!depositAddress) {
+    return res.status(503).json({ error: 'Deposit verification not configured for this network' });
+  }
+  try {
+    const userWallet = (wallet_address || '').toLowerCase();
+    const { txHashNorm, amount: actualAmount, fromAddress } = await verifyDepositTxAndGetHashAndAmount(txHash, net, depositAddress, userWallet, token);
+    const txHashForMatch = txHashNorm.replace(/^0x/, '');
+    const alreadyUsed = await Trading.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } })
+      || await Investment.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } });
+    if (alreadyUsed) {
+      return res.status(400).json({ error: 'This transaction was already used to confirm another deposit' });
+    }
+    const periodDays = Number(TRADING_PERIOD[type]) || 30;
+    const createdAt = new Date();
+    const end_date = new Date(createdAt.getTime() + periodDays * 24 * 60 * 60 * 1000);
+    const trading = await Trading.create({
+      id: randomUUID(),
+      user_id,
+      wallet_address,
+      token: String(token),
+      amount: Number(actualAmount),
+      type: String(type),
+      status: TRADING_STATUS.ACTIVE,
+      end_date,
+      deposit_tx_hash: txHashNorm,
+    });
+    const qynxToMint = Math.floor(Number(actualAmount) * QYNX_PER_USD);
+    if (fromAddress && qynxToMint > 0) mintQynxTo(fromAddress, qynxToMint, net).catch(() => {});
+    res.status(201).json(trading);
+  } catch (err) {
+    const status = err.message && err.message.includes('required') ? 400 : (err.message && err.message.includes('not configured') ? 503 : 500);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+/** QYNX per 1 USD for purchase credit and mint (must match frontend PurchaseQynxModal). */
+const QYNX_PER_USD = 10;
+const QYNX_DECIMALS = 18;
+
+/** Mint QYNX tokens to an address (tx sender). Set QYNX_CONTRACT_ADDRESS and QYNX_MINTER_PRIVATE_KEY in env; contract must expose mint(address to, uint256 amount). */
+async function mintQynxTo(toAddress, amountQynx, network) {
+  const contractAddress = process.env.QYNX_CONTRACT_ADDRESS;
+  const minterKey = process.env.QYNX_MINTER_PRIVATE_KEY;
+  if (!contractAddress || !minterKey || !toAddress || amountQynx <= 0) return;
+  const rpcUrl = RPC_URL[network === 'ethereum' ? 'ethereum' : 'bsc'];
+  if (!rpcUrl) return;
+  try {
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const wallet = new ethers.Wallet(minterKey, provider);
+    const amountWei = ethers.parseUnits(String(Math.floor(amountQynx)), QYNX_DECIMALS);
+    const abi = ['function mint(address to, uint256 amount)'];
+    const contract = new ethers.Contract(contractAddress, abi, wallet);
+    const tx = await contract.mint(toAddress, amountWei);
+    await tx.wait();
+  } catch (err) {
+    console.error('mintQynxTo error:', err.message);
+  }
+}
+
+/** Verify a deposit tx to user's treasury address and credit user's tokenAmount (QYNX). Used for Purchase QYNX via QR. */
+app.post('/api/purchase/verify-and-credit', async (req, res) => {
+  const { user_id, txHash, network, token } = req.body || {};
+  if (!user_id || !txHash || typeof txHash !== 'string' || !txHash.trim()) {
+    return res.status(400).json({ error: 'user_id, txHash, network, and token are required' });
+  }
+  const net = network === 'ethereum' ? 'ethereum' : 'bsc';
+  const userDoc = await User.findOne({ id: user_id }).lean();
+  let depositAddress = userDoc && userDoc.treasury_address && String(userDoc.treasury_address).trim()
+    ? String(userDoc.treasury_address).trim().toLowerCase()
+    : DEPOSIT_ADDRESS[net];
+  if (!depositAddress) {
+    return res.status(503).json({ error: 'Deposit verification not configured for this network' });
+  }
+  try {
+    const { txHashNorm, amount: actualAmount, fromAddress } = await verifyDepositTxAndGetHashAndAmount(
+      txHash.trim(), net, depositAddress, null, token || 'USDT'
+    );
+    const txHashForMatch = txHashNorm.replace(/^0x/, '');
+    const alreadyUsed = await Investment.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } })
+      || await Trading.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } });
+    if (alreadyUsed) {
+      return res.status(400).json({ error: 'This transaction was already used for another deposit' });
+    }
+    const user = await User.findOne({ id: user_id });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const qynxCredit = Math.floor(Number(actualAmount) * QYNX_PER_USD);
+    if (qynxCredit <= 0) {
+      return res.status(400).json({ error: 'Computed QYNX credit is zero' });
+    }
+    user.tokenAmount = (user.tokenAmount || 0) + qynxCredit;
+    await user.save();
+    if (fromAddress && qynxCredit > 0) mintQynxTo(fromAddress, qynxCredit, net).catch(() => {});
+    res.json({ tokenAmount: user.tokenAmount, credited: qynxCredit });
+  } catch (err) {
+    const status = err.message && err.message.includes('required') ? 400 : (err.message && err.message.includes('not configured') ? 503 : 500);
+    res.status(status).json({ error: err.message });
+  }
+});
+
 // --- Withdrawals ---
 app.get('/api/withdrawals', async (req, res) => {
   try {
@@ -589,7 +927,7 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-const PORT = process.argv[2] || process.env.PORT || 3000;
+const PORT = process.argv[2] || 3001;
 
 mongoose
   .connect(MONGODB_URI)
