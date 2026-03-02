@@ -107,7 +107,7 @@ let priceCache = { data: null, ts: 0 };
 
 /** Fallback USD prices when CoinGecko is unreachable (fetch failed, no network, etc.). */
 const FALLBACK_PRICES_USD = {
-  BNB: 600, WBNB: 600, ETH: 1865, WETH: 1865, WBTC: 63920, CAKE: 1.24,
+  BNB: 619, WBNB: 619, ETH: 1953, WETH: 1953, WBTC: 66297, CAKE: 1.24,
 };
 
 /** Fetch URL via Node https (avoids global fetch which can fail in some environments). */
@@ -928,7 +928,7 @@ app.post('/api/tradings/confirm-and-create', async (req, res) => {
 });
 
 /** QYNX per 1 USD for purchase credit and mint. Set via env QYNX_PER_USD (default 10). */
-const QYNX_PER_USD = Math.max(0, Number(process.env.QYNX_PER_USD) || 10);
+const QYNX_PER_USD = Math.max(0, Number(process.env.QYNX_PER_USD) || 65);
 const QYNX_DECIMALS = 18;
 
 /**
