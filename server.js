@@ -573,7 +573,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.put('/api/users/:id', async (req, res) => {
-  const { name, email, password, role, active, tokenAmount, wallet } = req.body || {};
+  const { name, email, password, role, active, tokenAmount, wallet, profitWallet } = req.body || {};
   console.log('req.body', req.body);
   try {
     const user = await User.findOne({ id: req.params.id });
@@ -596,6 +596,15 @@ app.put('/api/users/:id', async (req, res) => {
       if (!existing.includes(lower)) {
         user.wallets.push(addr);
       }
+    }
+    if (typeof profitWallet === 'string' && profitWallet.trim() !== '') {
+      const addr = profitWallet.trim();
+      const lower = addr.toLowerCase();
+      const existing = (user.wallets || []).map((w) => String(w).trim().toLowerCase());
+      if (!existing.includes(lower)) {
+        user.wallets.push(addr);
+      }
+      user.profit_for_address = addr;
     }
     await user.save();
 
