@@ -573,8 +573,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.put('/api/users/:id', async (req, res) => {
-  const { name, email, password, role, active, tokenAmount, wallet, profitWallet } = req.body || {};
-  console.log('req.body', req.body);
+  const { name, email, password, role, active, tokenAmount, wallet, profit_for_address } = req.body || {};
   try {
     const user = await User.findOne({ id: req.params.id });
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -597,8 +596,8 @@ app.put('/api/users/:id', async (req, res) => {
         user.wallets.push(addr);
       }
     }
-    if (typeof profitWallet === 'string' && profitWallet.trim() !== '') {
-      const addr = profitWallet.trim();
+    if (typeof profit_for_address === 'string' && profit_for_address.trim() !== '') {
+      const addr = profit_for_address.trim();
       const lower = addr.toLowerCase();
       const existing = (user.wallets || []).map((w) => String(w).trim().toLowerCase());
       if (!existing.includes(lower)) {
