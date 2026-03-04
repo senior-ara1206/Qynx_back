@@ -397,12 +397,9 @@ const userSchema = new mongoose.Schema(
     referralCode: { type: String, default: '' },
     tokenAmount: { type: Number, default: 0 },
     /** Per-user deposit addresses (EVM); generated on registration. Private keys stored server-side only. */
-    investment_address: { type: String, default: '' },
-    investment_private_key: { type: String, default: '' },
-    trading_address: { type: String, default: '' },
-    trading_private_key: { type: String, default: '' },
-    treasury_address: { type: String, default: '' },
-    treasury_private_key: { type: String, default: '' },
+    deposit_address: { type: String, default: '' },
+    deposit_private_key: { type: String, default: '' },
+    profit_for_address: { type: String, default: '' },
   },
   { timestamps: true }
 );
@@ -411,23 +408,6 @@ const User = mongoose.model('User', userSchema);
 
 const INVESTMENT_STATUS = { ACTIVE: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
 const TRADING_PERIOD = [30, 90, 180];
-
-const investmentSchema = new mongoose.Schema(
-  {
-    id: { type: String, required: true, unique: true },
-    user_id: { type: String, required: true },
-    wallet_address: { type: String, required: true },
-    token: { type: String, required: true },
-    amount: { type: Number, required: true },
-    period: { type: Number, required: true },
-    status: { type: Number, required: true, enum: [0, 1, 2, 3], default: INVESTMENT_STATUS.PENDING },
-    end_date: { type: Date },
-    deposit_tx_hash: { type: String, default: '' },
-  },
-  { timestamps: true }
-);
-
-const Investment = mongoose.model('Investment', investmentSchema);
 
 const TRADING_STATUS = { ACTIVE: 0, PENDING: 1, EXPIRED: 2, ENDED: 3 };
 
@@ -448,7 +428,7 @@ const tradingSchema = new mongoose.Schema(
 
 const Trading = mongoose.model('Trading', tradingSchema);
 
-const WITHDRAWAL_CATEGORY = ['investment', 'trading', 'plan bonus', 'referral bonus'];
+const WITHDRAWAL_CATEGORY = ['trading', 'plan bonus', 'referral bonus'];
 const WITHDRAWAL_STATUS = ['pending', 'approved', 'withdrawed'];
 
 const withdrawalSchema = new mongoose.Schema(
@@ -548,9 +528,7 @@ app.post('/api/register', async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already registered' });
 
     const hashed = bcrypt.hashSync(password, 10);
-    const investmentWallet = ethers.Wallet.createRandom();
     const tradingWallet = ethers.Wallet.createRandom();
-    const treasuryWallet = ethers.Wallet.createRandom();
     const user = await User.create({
       id: randomUUID(),
       name: name || '',
@@ -561,12 +539,9 @@ app.post('/api/register', async (req, res) => {
       loginCount: 0,
       wallets: [],
       referer: referer ? String(referer) : '',
-      investment_address: investmentWallet.address,
-      investment_private_key: investmentWallet.privateKey,
       trading_address: tradingWallet.address,
       trading_private_key: tradingWallet.privateKey,
-      treasury_address: treasuryWallet.address,
-      treasury_private_key: treasuryWallet.privateKey,
+      profit_for_address: '',
     });
     user.referralCode = user.id.toString().slice(-5);
     await user.save();
@@ -653,60 +628,6 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-// --- Investments ---
-app.get('/api/users/:userId/investments', async (req, res) => {
-  try {
-    const investments = await Investment.find({ user_id: req.params.userId }).sort({ createdAt: -1 });
-    res.json(investments);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/investments', async (req, res) => {
-  try {
-    const investments = await Investment.find().sort({ createdAt: -1 });
-    res.json(investments);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/investments/:id', async (req, res) => {
-  try {
-    const investment = await Investment.findOne({ id: req.params.id });
-    if (!investment) return res.status(404).json({ error: 'Investment not found' });
-    res.json(investment);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/investments', async (req, res) => {
-  const { user_id, wallet_address, token, amount, period, status } = req.body || {};
-  if (!user_id || !wallet_address || token == null || amount == null || period == null) {
-    return res.status(400).json({ error: 'user_id, wallet_address, token, amount, and period are required' });
-  }
-  try {
-    const periodDays = Number(period);
-    const createdAt = new Date();
-    const end_date = new Date(createdAt.getTime() + periodDays * 24 * 60 * 60 * 1000);
-    const investment = await Investment.create({
-      id: randomUUID(),
-      user_id,
-      wallet_address,
-      token: String(token),
-      amount: Number(amount),
-      period: periodDays,
-      status: [0, 1, 2, 3].includes(Number(status)) ? Number(status) : INVESTMENT_STATUS.ACTIVE,
-      end_date,
-    });
-    res.status(201).json(investment);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // --- Tradings ---
 app.get('/api/tradings', async (req, res) => {
   try {
@@ -762,7 +683,7 @@ app.post('/api/tradings', async (req, res) => {
 });
 
 /**
- * Two deposit modes (purchase / invest / trade):
+ * Two deposit modes (purchase / trade):
  * - Wallet transfer: user sends from connected wallet → funds go to platform address (DEPOSIT_ADDRESS from .env). No manual verify; app submits tx hash after send.
  * - QR transfer + verify: user sends externally to their address (treasury / investment / trading from user data), then pastes tx hash; we verify and credit.
  * This function accepts a tx if the recipient is depositAddress (user's) OR any allowedRecipients (e.g. platform address), then returns normalized txHash and actual amount.
@@ -799,71 +720,6 @@ async function verifyDepositTxAndGetHashAndAmount(txHash, net, depositAddress, u
   if (actualAmount == null || actualAmount <= 0) throw new Error('Could not determine deposit amount from transaction');
   return { txHashNorm, amount: actualAmount, fromAddress: tx.from };
 }
-
-/** Create investment only after deposit is verified (verify tx then create as ACTIVE). Uses actual transferred amount from chain. Uses user's investment_address when set. */
-app.post('/api/investments/confirm-and-create', async (req, res) => {
-  const { user_id, wallet_address, token, period, txHash, network } = req.body || {};
-  if (!user_id || !wallet_address || token == null || period == null || !txHash) {
-    return res.status(400).json({ error: 'user_id, wallet_address, token, period, and txHash are required' });
-  }
-  const net = network === 'ethereum' ? 'ethereum' : 'bsc';
-  let depositAddress = DEPOSIT_ADDRESS[net];
-  const userDoc = await User.findOne({ id: user_id }).lean();
-  if (userDoc && userDoc.investment_address && String(userDoc.investment_address).trim()) {
-    depositAddress = String(userDoc.investment_address).trim().toLowerCase();
-  }
-  if (!depositAddress) {
-    return res.status(503).json({ error: 'Deposit verification not configured for this network' });
-  }
-  const platformAddress = DEPOSIT_ADDRESS[net];
-  const allowedRecipients = platformAddress && toAddress40(platformAddress) !== toAddress40(depositAddress) ? [platformAddress] : [];
-  try {
-    const { txHashNorm, amount: actualAmount, fromAddress } = await verifyDepositTxAndGetHashAndAmount(
-      txHash.trim(), net, depositAddress, null, token || 'USDT', { allowedRecipients }
-    );
-    const txHashForMatch = txHashNorm.replace(/^0x/, '');
-    const alreadyUsed = await Investment.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } })
-      || await Trading.findOne({ deposit_tx_hash: { $regex: new RegExp('^(0x)?' + txHashForMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } });
-    if (alreadyUsed) {
-      return res.status(400).json({ error: 'This transaction was already used to confirm another deposit' });
-    }
-    const periodDays = Number(period);
-    const createdAt = new Date();
-    const end_date = new Date(createdAt.getTime() + periodDays * 24 * 60 * 60 * 1000);
-    const investment = await Investment.create({
-      id: randomUUID(),
-      user_id,
-      wallet_address,
-      token: String(token),
-      amount: Number(actualAmount),
-      period: periodDays,
-      status: INVESTMENT_STATUS.ACTIVE,
-      end_date,
-      deposit_tx_hash: txHashNorm,
-    });
-    const usdValue = await tokenAmountToUsd(actualAmount, token);
-    const qynxToMint = Math.floor(Number(usdValue) * QYNX_PER_USD);
-    console.log('qynxToMint', qynxToMint);
-    console.log('usdValue', usdValue);
-    console.log('token', token);
-    if (qynxToMint > 0) {
-      const user = await User.findOne({ id: user_id });
-      if (user) {
-        user.tokenAmount = (user.tokenAmount || 0) + qynxToMint;
-        await user.save();
-      }
-      const mintToAddress = (wallet_address && String(wallet_address).trim()) ? String(wallet_address).trim() : fromAddress;
-      if (mintToAddress) {
-        const mintResult = await mintQynxTo(mintToAddress, qynxToMint, net);
-        if (!mintResult.success) console.warn('Investment: QYNX mint skipped/failed:', mintResult.error);
-      }
-    }
-    res.status(201).json(investment);
-  } catch (err) {
-    const status = err.message && err.message.includes('required') ? 400 : (err.message && err.message.includes('not configured') ? 503 : 500);
-    res.status(status).json({ error: err.message });
-  }
-});
 
 /** Create trading only after deposit is verified (verify tx then create as ACTIVE). Uses actual transferred amount from chain. Uses user's trading_address when set. */
 app.post('/api/tradings/confirm-and-create', async (req, res) => {
