@@ -528,7 +528,7 @@ app.post('/api/register', async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already registered' });
 
     const hashed = bcrypt.hashSync(password, 10);
-    const tradingWallet = ethers.Wallet.createRandom();
+    const depositWallet = ethers.Wallet.createRandom();
     const user = await User.create({
       id: randomUUID(),
       name: name || '',
@@ -539,8 +539,8 @@ app.post('/api/register', async (req, res) => {
       loginCount: 0,
       wallets: [],
       referer: referer ? String(referer) : '',
-      trading_address: tradingWallet.address,
-      trading_private_key: tradingWallet.privateKey,
+      deposit_address: depositWallet.address,
+      deposit_private_key: depositWallet.privateKey,
       profit_for_address: '',
     });
     user.referralCode = user.id.toString().slice(-5);
